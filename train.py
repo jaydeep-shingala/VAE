@@ -1,0 +1,103 @@
+import torch
+import torchvision.datasets as datasets  # Standard datasets
+from tqdm import tqdm
+from torch import nn, optim
+from model import VariationalAutoEncoder
+from torchvision import transforms
+from torchvision.utils import save_image
+from torch.utils.data import DataLoader
+
+# Configuration
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+INPUT_DIM = 3072
+H_DIM = 512
+Z_DIM = 20
+NUM_EPOCHS = 30
+BATCH_SIZE = 60
+LR_RATE = 0.0001  # Karpathy constant
+
+# Dataset Loading
+dataset = datasets.CIFAR10(root="dataset/", train=True, transform=transforms.ToTensor(), download=True)
+train_loader = DataLoader(dataset=dataset, batch_size=BATCH_SIZE, shuffle=True)
+model = VariationalAutoEncoder(INPUT_DIM, H_DIM, Z_DIM).to(DEVICE)
+optimizer = optim.Adam(model.parameters(), lr=LR_RATE)
+loss_fn = nn.BCELoss(reduction="sum")
+# print(train_loader[0].shape)
+for epoch in range(NUM_EPOCHS):
+    loop = tqdm(enumerate(train_loader))
+    for i, (x, _) in loop:
+        optimizer.zero_grad()
+        # print(x.shape)
+        x = x.to(DEVICE).view(x.shape[0], INPUT_DIM)
+        x_reconstructed, mu, sigma = model(x)
+        
+        reconstructed_loss = loss_fn(x_reconstructed, x)
+        kl_div = -torch.sum(1 + torch.log(sigma.pow(2)) - mu.pow(2) - sigma.pow(2))
+        
+        loss = reconstructed_loss + kl_div
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        loop.set_postfix(loss=loss.item())
+
+# def inference(digit, num_examples=1):
+#     """
+#     Generates (num_examples) of a particular digit.
+#     Specifically we extract an example of each digit,
+#     then after we have the mu, sigma representation for
+#     each digit we can sample from that.
+
+#     After we sample we can run the decoder part of the VAE
+#     and generate examples.
+#     """
+#     images = []
+#     idx = 0
+#     for x, y in dataset:
+#         if y == idx:
+#             images.append(x)
+#             idx += 1
+#         if idx == 10:
+#             break
+
+#     encodings_digit = []
+#     for d in range(10):
+#         with torch.no_grad():
+#             mu, sigma = model.encode(images[d].to(DEVICE).view(1, 1024))
+#         encodings_digit.append((mu, sigma))
+
+#     mu, sigma = encodings_digit[digit]
+#     for example in range(num_examples):
+#         epsilon = torch.randn_like(sigma)
+#         z = mu + sigma * epsilon
+#         out = model.decode(z)
+#         out = out.view(-1, 1, 32, 32)
+#         save_image(out, f"generated_{digit}_ex{example}.png")
+
+# for idx in range(10):
+#     inference(idx, num_examples=1)
+    
+    
+test_dataset = datasets.CIFAR10(root="dataset/", train=False, transform=transforms.ToTensor(), download=True)
+test_loader = DataLoader(dataset=test_dataset, batch_size=1, shuffle=False)
+
+# Select 10 random images from the test dataset
+random_indices = torch.randint(0, len(test_dataset), (10,))
+random_images = [test_dataset[i][0].to(DEVICE) for i in random_indices]
+
+
+encodings_digit = []
+for d in range(10):
+    with torch.no_grad():
+        mu, sigma = model.encode(random_images[d].to(DEVICE).view(1, 3072))
+    encodings_digit.append((mu, sigma))
+    
+num_examples = 1
+for d in range(10):
+    mu, sigma = encodings_digit[d]
+    for example in range(num_examples):
+        epsilon = torch.randn_like(sigma)
+        z = mu + sigma * epsilon
+        out = model.decode(z)
+        out = out.view(-1, 3, 32, 32)
+        save_image(random_images[d], f"test_{d}.png")
+        save_image(out, f"generated_{d}_ex{example}.png")
